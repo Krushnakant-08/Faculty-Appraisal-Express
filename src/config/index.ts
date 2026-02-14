@@ -6,7 +6,8 @@ dotenv.config();
 
 export const config = {
   // Server
-  port: Number(process.env.PORT),
+  // Provide a sensible default port so containers start correctly when PORT is not set
+  port: Number(process.env.PORT || 4000),
   
   nodeEnv: process.env.NODE_ENV || 'development',
   

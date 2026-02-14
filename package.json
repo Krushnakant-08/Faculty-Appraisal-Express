@@ -4,8 +4,8 @@
   "description": "Faculty Appraisal Backend with Express and MongoDB",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "prisma generate && tsc",
+  "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+  "build": "tsc",
     "start": "node dist/index.js"
   },
   "author": "",

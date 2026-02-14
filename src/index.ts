@@ -14,10 +14,7 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:3001",
-    ],
+    origin: config.allowedOrigins,
     credentials: true,
   }),
 );
@@ -31,23 +28,6 @@ app.use("/", routes);
 
 app.get("/", (req, res) => {
   res.send("FDW Faculty Appraisal System API");
-});
-
-app.get('/health/db', async (_req, res) => {
-  try {
-    // Mongoose health check
-    if (mongoose.connection.readyState === 1) {
-      res.json({ db: 'connected' });
-    } else {
-      throw new Error('Mongoose not connected');
-    }
-  } catch (e: any) {
-    console.error(e);
-    res.status(500).json({
-      db: 'error',
-      message: e.message
-    });
-  }
 });
 
 // app.get("/debug/env", (_req, res) => {
