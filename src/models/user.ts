@@ -22,6 +22,8 @@ export interface User extends Document {
   deleted?: boolean;
   role: UserRole;
   lastLogin?: Date;
+  resetPasswordToken?: string;
+  resetPasswordExpires?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -88,6 +90,12 @@ const userSchema = new Schema<User>(
     },
 
     lastLogin: {
+      type: Date,
+    },
+    resetPasswordToken: {
+      type: String,
+    },
+    resetPasswordExpires: {
       type: Date,
     },
     deleted: {

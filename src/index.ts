@@ -30,7 +30,7 @@ app.use(morgan(config.nodeEnv === "development" ? "dev" : "combined"));
 app.use("/", routes);
 
 app.get("/", (req, res) => {
-  res.send("IEEE Hackathon Backend is running!");
+  res.send("FDW Faculty Appraisal System API");
 });
 
 app.get('/health/db', async (_req, res) => {
@@ -50,12 +50,12 @@ app.get('/health/db', async (_req, res) => {
   }
 });
 
-app.get("/debug/env", (_req, res) => {
-  res.json({
-    hasDatabaseUrl: !!process.env.DATABASE_URL,
-    length: process.env.DATABASE_URL?.length ?? 0
-  });
-});
+// app.get("/debug/env", (_req, res) => {
+//   res.json({
+//     hasDatabaseUrl: !!process.env.DATABASE_URL,
+//     length: process.env.DATABASE_URL?.length ?? 0
+//   });
+// });
 app.use(notFoundHandler);
 app.use(errorHandler);
 

@@ -1,9 +1,11 @@
 import { Request, Response } from "express";
+import crypto from "crypto";
 import { generateToken } from "../utils/jwt";
 import { comparePassword } from "../utils/password";
 import { sendSuccess, sendError, HttpStatus } from "../utils/response";
 import { User } from "../models/user";
 import { hashPassword } from "../utils/password";
+import { sendPasswordResetEmail } from "../utils/mail";
 const setCookies = (
   res: Response,
   accessToken: string,
@@ -41,14 +43,11 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId, password } = req.body;
 
-    console.log("Login attempt for userId:", String(userId).trim());
-
     const user = await User.findOne({
       userId: String(userId).trim(),
       deleted: false,
     });
 
-    console.log("User found:", user);
     if (!user) {
       sendError(res, "Invalid userId or password", HttpStatus.UNAUTHORIZED);
       return;
@@ -207,5 +206,122 @@ export const changePassword = async (
       "Failed to change password",
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
+  }
+};
+
+/**
+ * Request password reset - sends reset link to user's email
+ */
+export const requestPasswordReset = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        message: "Email is required"
+      });
+      return;
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email, deleted: false });
+
+    if (!user) {
+      // Don't reveal if user exists or not for security
+      res.status(200).json({
+        message: "If an account with that email exists, a password reset link has been sent."
+      });
+      return;
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Set token and expiry (1 hour)
+    user.resetPasswordToken = hashedToken;
+    user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour
+    await user.save();
+
+    // Send email
+    const emailSent = await sendPasswordResetEmail(user.email, user.name, resetToken);
+
+    if (!emailSent) {
+      res.status(500).json({
+        message: "Failed to send password reset email. Please try again later."
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "If an account with that email exists, a password reset link has been sent."
+    });
+  } catch (error) {
+    console.error("Error requesting password reset:", error);
+    res.status(500).json({
+      message: "Internal server error"
+    });
+  }
+};
+
+/**
+ * Reset password using token
+ */
+export const resetPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      res.status(400).json({
+        message: "Token and new password are required"
+      });
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      res.status(400).json({
+        message: "Password must be at least 6 characters long"
+      });
+      return;
+    }
+
+    // Hash the token from URL to compare with DB
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with valid token
+    const user = await User.findOne({
+      resetPasswordToken: hashedToken,
+      resetPasswordExpires: { $gt: new Date() },
+      deleted: false
+    });
+
+    if (!user) {
+      res.status(400).json({
+        message: "Invalid or expired reset token"
+      });
+      return;
+    }
+
+    // Hash new password and update
+    const hashedPassword = await hashPassword(newPassword);
+    user.password = hashedPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.status(200).json({
+      message: "Password has been reset successfully"
+    });
+  } catch (error) {
+    console.error("Error resetting password:", error);
+    res.status(500).json({
+      message: "Internal server error"
+    });
   }
 };

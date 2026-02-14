@@ -4,10 +4,8 @@ import  { AddUser } from '../handlers/admin.handler';
 const router = Router();
 
 // All admin routes require admin role
-router.post('/create-user', AddUser);
-
-
 router.use(authMiddleware('admin'));
 
+router.post('/create-user', AddUser);
 
 export default router;

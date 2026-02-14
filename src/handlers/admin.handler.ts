@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { DepartmentValue, StakeholderStatus, UserDesignation, UserRole } from '../constant';
 import { User } from '../models/user';
+import { hashPassword } from '../utils/password';
 
 interface CreateUserRequest {
     userId: string;
@@ -16,9 +17,11 @@ interface CreateUserRequest {
 
 
 interface UserResponse {
-  userId: string;
+    userId: string;
     username: string;
     role: string;
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 interface SuccessResponse {
@@ -30,19 +33,33 @@ interface ErrorResponse {
     message: string;
 }
 
-
 export const AddUser = async (
   req: Request<{}, {}, CreateUserRequest>,
   res: Response<SuccessResponse | ErrorResponse>
 ) => {
   try {
-    const { userId, name, email, department, mobile, designation, status, password, role } = req.body;
+    console.log('Request body:', req.body);
+    
+    const { 
+      userId, 
+      name, 
+      email, 
+      department, 
+      mobile, 
+      designation, 
+      status, 
+      password, 
+      role
+    } = req.body;
 
+    // Validate required fields
     if (!userId || !name || !email || !department || !mobile || !designation || !status || !password || !role) {
       return res.status(400).json({
-        message: "All fields including userId are required"
+        message: `All fields including ${userId} ${name} ${email} ${department} ${mobile} ${designation} ${status} ${password} ${role} are required`
       });
     }
+
+    // Check if user already exists
     const existingUserId = await User.findOne({ userId });
     if (existingUserId) {
       return res.status(409).json({
@@ -57,6 +74,10 @@ export const AddUser = async (
       });
     }
 
+    // Hash the password
+    const hashedPassword = await hashPassword(password);
+
+    // Create user in User collection
     const user = await User.create({
       userId,
       name,
@@ -65,14 +86,18 @@ export const AddUser = async (
       mobile,
       designation,
       status,
-      password,
-      role
+      password: hashedPassword,
+      role,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     const response: UserResponse = {
       userId: user.userId,
       username: user.name,
-      role: user.role
+      role: user.role,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
     };
 
     return res.status(201).json({
@@ -83,7 +108,7 @@ export const AddUser = async (
   } catch (error) {
     console.error("Error creating user:", error);
     return res.status(500).json({
-      message: "Internal server error"
+      message: error instanceof Error ? error.message : "Internal server error"
     });
   }
 };
