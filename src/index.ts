@@ -26,9 +26,6 @@ app.use(morgan(config.nodeEnv === "development" ? "dev" : "combined"));
 
 app.use("/", routes);
 
-app.get("/", (req, res) => {
-  res.send("FDW Faculty Appraisal System API");
-});
 
 // app.get("/debug/env", (_req, res) => {
 //   res.json({
