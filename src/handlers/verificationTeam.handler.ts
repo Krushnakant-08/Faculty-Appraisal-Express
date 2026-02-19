@@ -17,6 +17,57 @@ interface GetCommitteeBody {
   department: string;
 }
 
+interface GetUnassignedFacultiesBody {
+  department: string;
+}
+
+// Get unassigned faculties for a department
+export const getUnassignedFacultiesByDept = async (
+  req: Request<{}, {}, GetUnassignedFacultiesBody>,
+  res: Response
+) => {
+  try {
+    const { department } = req.body;
+    
+    if (!department) {
+      return res.status(400).json({
+        error: 'Department is required'
+      });
+    }
+
+    // Get all faculties from the department
+    const allFaculties = await User.find({ 
+      department: department,
+      role: { $ne: 'admin' },
+      status: 'active'
+    }).select('userId name email department designation role');
+
+    // Get all verification teams for this department
+    const verificationTeams = await VerificationTeam.find({ department });
+
+    // Collect all assigned faculty IDs
+    const assignedFacultyIds = new Set<string>();
+    for (const team of verificationTeams) {
+      team.faculties.forEach(facultyId => {
+        assignedFacultyIds.add(facultyId.toString());
+      });
+    }
+
+    // Filter out assigned faculties
+    const unassignedFaculties = allFaculties.filter(
+      faculty => !assignedFacultyIds.has(faculty._id.toString())
+    );
+
+    return res.status(200).json(unassignedFaculties);
+
+  } catch (error) {
+    console.error('Error fetching unassigned faculties:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch unassigned faculties'
+    });
+  }
+};
+
 // Get verification committee for a department
 export const getVerificationCommitteeByDept = async (
   req: Request<{}, {}, GetCommitteeBody>,
@@ -109,12 +160,6 @@ export const createVerificationCommitteeByDept = async (
       });
     }
 
-    // Get all faculty from the department being verified
-    const departmentFaculty = await User.find({ 
-      department: department,
-      role: 'faculty'
-    });
-
     // Handle deleted verifiers first
     if (deleted_verifiers.length > 0) {
       const deletedUsers = await User.find({ userId: { $in: deleted_verifiers } });
@@ -135,16 +180,10 @@ export const createVerificationCommitteeByDept = async (
       userId: { $nin: existingVerifierIds }
     });
 
-    // Distribute faculty among verifiers evenly
-    const facultyPerVerifier = Math.ceil(departmentFaculty.length / verifiers.length);
+    // Create verification teams without automatic faculty assignment
     const verificationTeams = [];
     
-    for (let i = 0; i < verifiers.length; i++) {
-      const verifier = verifiers[i];
-      const startIndex = i * facultyPerVerifier;
-      const endIndex = Math.min(startIndex + facultyPerVerifier, departmentFaculty.length);
-      const assignedFaculties = departmentFaculty.slice(startIndex, endIndex);
-
+    for (const verifier of verifiers) {
       // Check if this verifier already has a team
       const existingTeam = await VerificationTeam.findOne({
         userId: verifier._id,
@@ -152,16 +191,14 @@ export const createVerificationCommitteeByDept = async (
       });
 
       if (existingTeam) {
-        // Update existing team
-        existingTeam.faculties = assignedFaculties.map(f => f._id);
-        await existingTeam.save();
+        // Keep existing team with its current faculties
         verificationTeams.push(existingTeam);
       } else {
-        // Create new team
+        // Create new team with empty faculties array
         const newTeam = new VerificationTeam({
           userId: verifier._id,
           department: department,
-          faculties: assignedFaculties.map(f => f._id)
+          faculties: []
         });
         await newTeam.save();
         verificationTeams.push(newTeam);
