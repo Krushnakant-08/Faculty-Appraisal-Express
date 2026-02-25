@@ -229,8 +229,8 @@ const facultyAppraisalSchema = new Schema<IFacultyAppraisal>(
 
     status: {
       type:    String,
-      enum:    APPRAISAL_STATUS,          // "DRAFT" | "SUBMITTED" | "VERIFIED" | "APPROVED"
-      default: "DRAFT",
+      enum:    APPRAISAL_STATUS,
+      default: APPRAISAL_STATUS.PEDING,
     },
 
     /** Academic rank — validated against ACADEMIC_CADRES derived from DESIGNATION. */
