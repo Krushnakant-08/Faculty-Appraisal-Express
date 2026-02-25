@@ -33,6 +33,36 @@ async function findAppraisalOrFail(
 }
 
 /**
+ * Find an existing appraisal for this userId, or create a fresh DRAFT one.
+ * Used by every part-update handler so faculty never have to manually POST to create first.
+ * Returns null (and sends a 500) only if the DB write itself fails.
+ */
+async function findOrCreateAppraisal(
+  res: Response,
+  userId: string,
+  requestingUser: { userId: string; role: UserRole }
+): Promise<IFacultyAppraisal | null> {
+  const existing = await FacultyAppraisal.findOne({ userId });
+  if (existing) return existing;
+
+  // Appraisal doesn't exist yet — auto-create it
+  const user = await User.findOne({ userId, status: 'active' });
+  if (!user) {
+    sendError(res, 'Active user record not found; cannot auto-create appraisal', HttpStatus.NOT_FOUND);
+    return null;
+  }
+
+  const created = await FacultyAppraisal.create({
+    userId,
+    role: requestingUser.role,
+    designation: user.designation,
+    appraisalYear: new Date().getFullYear(),
+    status: APPRAISAL_STATUS.PEDING,
+  });
+  return created;
+}
+
+/**
  * Guard: the requesting user must be the appraisal owner.
  * Returns true if the check passes, false + sends 403 if it fails.
  */
@@ -61,58 +91,6 @@ function assertDraft(res: Response, appraisal: IFacultyAppraisal): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CREATE
-// POST /appraisal
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Creates a new DRAFT appraisal for the authenticated faculty member.
- * Pulls designation, role, and appraisalYear from the User record so the
- * schema required fields are always populated correctly.
- */
-export const createAppraisal = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const requestingUser = req.user!;
-
-    // Fetch the full user record to get designation (academic rank)
-    const user = await User.findOne({ userId: requestingUser.userId, status: 'active' });
-    if (!user) {
-      sendError(res, 'Active user not found', HttpStatus.NOT_FOUND);
-      return;
-    }
-
-    const appraisalYear = new Date().getFullYear();
-
-    // Prevent duplicate appraisals for the same year
-    const existing = await FacultyAppraisal.findOne({
-      userId: requestingUser.userId,
-      appraisalYear,
-    });
-    if (existing) {
-      sendError(
-        res,
-        `An appraisal for ${appraisalYear} already exists for this user`,
-        HttpStatus.CONFLICT
-      );
-      return;
-    }
-
-    const newAppraisal = await FacultyAppraisal.create({
-      userId:        requestingUser.userId,
-      role:          requestingUser.role,   // from JWT / middleware
-      designation:   user.designation,     // academic rank from User model
-      appraisalYear,
-      status:        'DRAFT',
-    });
-
-    sendSuccess(res, newAppraisal, 'Appraisal created successfully', HttpStatus.CREATED);
-  } catch (error) {
-    console.error('createAppraisal error:', error);
-    sendError(res, 'Failed to create appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
-  }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // READ — single
 // GET /appraisal/:userId
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,7 +105,7 @@ export const getAppraisalByUserId = async (req: Request, res: Response): Promise
     const requestingUser = req.user!;
 
     const isEvaluator = EVALUATOR_ROLES.includes(requestingUser.role);
-    const isOwner     = requestingUser.userId === userId;
+    const isOwner = requestingUser.userId === userId;
 
     if (!isOwner && !isEvaluator) {
       sendError(res, 'Unauthorized to view this appraisal', HttpStatus.FORBIDDEN);
@@ -229,7 +207,7 @@ export const updatePartA = async (req: Request, res: Response): Promise<void> =>
 
     if (!assertOwner(res, requestingUser.userId, userId)) return;
 
-    const appraisal = await findAppraisalOrFail(res, userId);
+    const appraisal = await findOrCreateAppraisal(res, userId, requestingUser);
     if (!appraisal) return;
     if (!assertDraft(res, appraisal)) return;
 
@@ -258,7 +236,7 @@ export const updatePartB = async (req: Request, res: Response): Promise<void> =>
 
     if (!assertOwner(res, requestingUser.userId, userId)) return;
 
-    const appraisal = await findAppraisalOrFail(res, userId);
+    const appraisal = await findOrCreateAppraisal(res, userId, requestingUser);
     if (!appraisal) return;
     if (!assertDraft(res, appraisal)) return;
 
@@ -286,7 +264,7 @@ export const updatePartC = async (req: Request, res: Response): Promise<void> =>
 
     if (!assertOwner(res, requestingUser.userId, userId)) return;
 
-    const appraisal = await findAppraisalOrFail(res, userId);
+    const appraisal = await findOrCreateAppraisal(res, userId, requestingUser);
     if (!appraisal) return;
     if (!assertDraft(res, appraisal)) return;
 
@@ -316,7 +294,7 @@ export const updatePartD = async (req: Request, res: Response): Promise<void> =>
 
     if (!assertOwner(res, requestingUser.userId, userId)) return;
 
-    const appraisal = await findAppraisalOrFail(res, userId);
+    const appraisal = await findOrCreateAppraisal(res, userId, requestingUser);
     if (!appraisal) return;
     if (!assertDraft(res, appraisal)) return;
 
@@ -375,11 +353,11 @@ export const updatePartDEvaluator = async (req: Request, res: Response): Promise
 
     switch (requestingUser.role) {
       case 'dean':
-        setFields['partD.deanMarks']  = marks;
+        setFields['partD.deanMarks'] = marks;
         setFields['partD.isMarkDean'] = true;
         break;
       case 'hod':
-        setFields['partD.hodMarks']  = marks;
+        setFields['partD.hodMarks'] = marks;
         setFields['partD.isMarkHOD'] = true;
         break;
       case 'director':
@@ -417,7 +395,7 @@ export const updatePartE = async (req: Request, res: Response): Promise<void> =>
 
     if (!assertOwner(res, requestingUser.userId, userId)) return;
 
-    const appraisal = await findAppraisalOrFail(res, userId);
+    const appraisal = await findOrCreateAppraisal(res, userId, requestingUser);
     if (!appraisal) return;
     if (!assertDraft(res, appraisal)) return;
 

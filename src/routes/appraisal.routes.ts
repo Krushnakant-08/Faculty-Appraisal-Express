@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth.middleware';
 import {
-  createAppraisal,
   getAppraisalByUserId,
   getAllAppraisals,
   getAppraisalsByDepartment,
@@ -33,10 +32,6 @@ router.get(
   authMiddleware('admin', 'director', 'dean', 'associate_dean', 'hod'),
   getAppraisalsByDepartment
 );
-
-// POST /appraisal
-// Create a new DRAFT appraisal for the authenticated faculty member.
-router.post('/', createAppraisal);
 
 
 // GET /appraisal/:userId
