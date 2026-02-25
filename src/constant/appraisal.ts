@@ -1,7 +1,18 @@
 import { type UserRole } from "./userInfo";
 
-export const APPRAISAL_STATUS = ["DRAFT", "SUBMITTED", "VERIFIED", "APPROVED"] as const;
-export type AppraisalStatus = typeof APPRAISAL_STATUS[number];
+// export const APPRAISAL_STATUS = ["DRAFT", "SUBMITTED", "VERIFIED", "APPROVED"] as const;
+export const APPRAISAL_STATUS = {
+  PEDING: "Pending",
+  VERIFICATION_PENDING: "Verification Pending",
+  PORTFOLIO_MARKING_PENDING: "Portfolio Marks Pending",
+  INTERACTION_PENDING: "Interaction Pending",
+  MARKS_VERIFICATION_PENDING: "Marks Verification Pending",
+  COMPLETED: "Completed",
+  SENT_TO_DIRECTOR: "Sent to Director",  
+} as const;
+
+
+export type AppraisalStatus = typeof APPRAISAL_STATUS[keyof typeof APPRAISAL_STATUS];
 
 export const ADMIN_DESIGNATIONS = [
     "Director", 

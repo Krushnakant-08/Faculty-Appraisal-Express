@@ -3,6 +3,7 @@ import { FacultyAppraisal, IFacultyAppraisal } from '../models/detailedAppraisal
 import { User } from '../models/user';
 import { sendSuccess, sendError, HttpStatus } from '../utils/response';
 import { type UserRole } from '../constant/userInfo';
+import { APPRAISAL_STATUS } from '../constant';
 
 declare global {
   namespace Express {
@@ -48,7 +49,7 @@ function assertOwner(res: Response, requestingUserId: string, targetUserId: stri
  * Returns true if the check passes.
  */
 function assertDraft(res: Response, appraisal: IFacultyAppraisal): boolean {
-  if (appraisal.status !== 'DRAFT') {
+  if (appraisal.status !== APPRAISAL_STATUS.PEDING) {
     sendError(
       res,
       `Appraisal is locked (status: ${appraisal.status}). Only DRAFT appraisals can be edited.`,
@@ -353,10 +354,10 @@ export const updatePartDEvaluator = async (req: Request, res: Response): Promise
     const appraisal = await findAppraisalOrFail(res, userId);
     if (!appraisal) return;
 
-    if (appraisal.status !== 'SUBMITTED') {
+    if (appraisal.status !== APPRAISAL_STATUS.PORTFOLIO_MARKING_PENDING) {
       sendError(
         res,
-        'Evaluator marks can only be entered after the faculty has submitted (SUBMITTED status)',
+        'Evaluator marks can only be entered after the faculty has submitted their portfolio for marking',
         HttpStatus.BAD_REQUEST
       );
       return;
@@ -496,7 +497,7 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
     const appraisal = await findAppraisalOrFail(res, userId);
     if (!appraisal) return;
 
-    if (appraisal.status !== 'DRAFT') {
+    if (appraisal.status !== APPRAISAL_STATUS.PEDING) {
       sendError(
         res,
         `Cannot submit: appraisal is already in ${appraisal.status} status`,
@@ -514,7 +515,7 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    appraisal.status = 'SUBMITTED';
+    appraisal.status = APPRAISAL_STATUS.VERIFICATION_PENDING;
     appraisal.declaration.signatureDate = new Date();
     await appraisal.save();
 
@@ -522,182 +523,5 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
   } catch (error) {
     console.error('submitAppraisal error:', error);
     sendError(res, 'Failed to submit appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
-  }
-};
-
-/**
- * PATCH /appraisal/:userId/verify
- * Transitions SUBMITTED → VERIFIED.
- * Accepts a structured verificationData body to set verified marks on specific
- * sub-fields without touching any faculty-supplied data.
- *
- * Expected body shape (all fields optional):
- * {
- *   partB?: {
- *     papers?: { sci?: number, esci?: number, scopus?: number, ugc?: number, other?: number },
- *     conferences?: { scopus?: number, other?: number },
- *     ... (same pattern for every Part B category)
- *     totalVerified?: number
- *   },
- *   partC?: { verifiedMarks?: number },
- *   partE?: { evaluatorMarks?: number },
- *   summary?: { grandTotalVerified?: number }
- * }
- */
-export const verifyAppraisal = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { userId } = req.params;
-    const { verificationData } = req.body as {
-      verificationData?: Record<string, unknown>;
-    };
-
-    const appraisal = await findAppraisalOrFail(res, userId);
-    if (!appraisal) return;
-
-    if (appraisal.status !== 'SUBMITTED') {
-      sendError(
-        res,
-        `Cannot verify: appraisal must be SUBMITTED (current: ${appraisal.status})`,
-        HttpStatus.BAD_REQUEST
-      );
-      return;
-    }
-
-    // Build a surgical $set targeting only `verified` leaf fields.
-    // This guarantees faculty-submitted data is never touched.
-    const setFields: Record<string, unknown> = { status: 'VERIFIED' };
-
-    if (verificationData) {
-      // ── Part B verified marks ──────────────────────────────────────────────
-      const B_CATEGORIES = [
-        'papers', 'conferences', 'bookChapters', 'books', 'citations',
-        'copyrights', 'patents', 'grants', 'products', 'startup',
-        'awards', 'industryInteraction',
-      ] as const;
-
-      const partB = verificationData.partB as Record<string, Record<string, number>> | undefined;
-      if (partB) {
-        for (const category of B_CATEGORIES) {
-          const cat = partB[category];
-          if (cat && typeof cat === 'object') {
-            for (const [subKey, value] of Object.entries(cat)) {
-              if (typeof value === 'number') {
-                setFields[`partB.${category}.${subKey}.verified`] = value;
-              }
-            }
-          }
-        }
-        // Single-metric categories
-        (['revenueTraining', 'placement'] as const).forEach((key) => {
-          const val = (partB as Record<string, unknown>)[key];
-          if (typeof val === 'number') setFields[`partB.${key}.verified`] = val;
-        });
-        if (typeof partB.totalVerified === 'number') {
-          setFields['partB.totalVerified'] = partB.totalVerified;
-        }
-      }
-
-      // ── Part C verified marks ──────────────────────────────────────────────
-      const partC = verificationData.partC as { verifiedMarks?: number } | undefined;
-      if (typeof partC?.verifiedMarks === 'number') {
-        setFields['partC.verifiedMarks'] = partC.verifiedMarks;
-      }
-
-      // ── Part E evaluator marks ─────────────────────────────────────────────
-      const partE = verificationData.partE as { evaluatorMarks?: number } | undefined;
-      if (typeof partE?.evaluatorMarks === 'number') {
-        setFields['partE.evaluatorMarks'] = partE.evaluatorMarks;
-      }
-
-      // ── Summary ───────────────────────────────────────────────────────────
-      const summary = verificationData.summary as { grandTotalVerified?: number } | undefined;
-      if (typeof summary?.grandTotalVerified === 'number') {
-        setFields['summary.grandTotalVerified'] = summary.grandTotalVerified;
-      }
-    }
-
-    const updated = await FacultyAppraisal.findOneAndUpdate(
-      { userId },
-      { $set: setFields },
-      { new: true }
-    );
-
-    sendSuccess(res, updated, 'Appraisal verified successfully');
-  } catch (error) {
-    console.error('verifyAppraisal error:', error);
-    sendError(res, 'Failed to verify appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
-  }
-};
-
-/**
- * PATCH /appraisal/:userId/approve
- * Transitions VERIFIED → APPROVED.
- * Optionally records the final grandTotalVerified in the summary.
- */
-export const approveAppraisal = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { userId } = req.params;
-    const { grandTotalVerified } = req.body as { grandTotalVerified?: number };
-
-    const appraisal = await findAppraisalOrFail(res, userId);
-    if (!appraisal) return;
-
-    if (appraisal.status !== 'VERIFIED') {
-      sendError(
-        res,
-        `Cannot approve: appraisal must be VERIFIED (current: ${appraisal.status})`,
-        HttpStatus.BAD_REQUEST
-      );
-      return;
-    }
-
-    const setFields: Record<string, unknown> = { status: 'APPROVED' };
-    if (typeof grandTotalVerified === 'number') {
-      setFields['summary.grandTotalVerified'] = grandTotalVerified;
-    }
-
-    const updated = await FacultyAppraisal.findOneAndUpdate(
-      { userId },
-      { $set: setFields },
-      { new: true }
-    );
-
-    sendSuccess(res, updated, 'Appraisal approved successfully');
-  } catch (error) {
-    console.error('approveAppraisal error:', error);
-    sendError(res, 'Failed to approve appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
-  }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DELETE
-// DELETE /appraisal/:userId  (DRAFT only)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Permanently deletes a DRAFT appraisal.
- * Only the owner may delete; once submitted it cannot be deleted.
- */
-export const deleteAppraisal = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { userId } = req.params;
-    const requestingUser = req.user!;
-
-    if (!assertOwner(res, requestingUser.userId, userId)) return;
-
-    const appraisal = await findAppraisalOrFail(res, userId);
-    if (!appraisal) return;
-
-    if (appraisal.status !== 'DRAFT') {
-      sendError(res, 'Only DRAFT appraisals can be deleted', HttpStatus.BAD_REQUEST);
-      return;
-    }
-
-    await FacultyAppraisal.deleteOne({ userId });
-
-    sendSuccess(res, null, 'Appraisal deleted successfully');
-  } catch (error) {
-    console.error('deleteAppraisal error:', error);
-    sendError(res, 'Failed to delete appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
   }
 };
