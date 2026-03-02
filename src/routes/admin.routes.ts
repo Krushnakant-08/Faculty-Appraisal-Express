@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth.middleware';
-import { AddUser, deleteUser, getAllUsers } from '../handlers/admin.handler';
+import { AddUser, deleteUser, getAllUsers, assignInteractionDeans, getAllInteractionDeans } from '../handlers/admin.handler';
 import { createVerificationCommittee, getVerificationCommitteeByDept } from '../handlers/verificationTeam.handler';
 const router = Router();
 
@@ -10,7 +10,11 @@ router.use(authMiddleware('admin'));
 router.post('/create-user', AddUser);
 router.delete('/delete-user', deleteUser);
 router.get('/faculties', getAllUsers);
-router.post('/verification-committee', createVerificationCommittee);
-router.get('/verification-committee/:department', getVerificationCommitteeByDept);
+router.post('/verification-team', createVerificationCommittee);
+router.get('/verification-team/:department', getVerificationCommitteeByDept);
+
+// Interaction deans routes
+router.get('/interaction-deans', getAllInteractionDeans);
+router.post('/interaction-deans/:department', assignInteractionDeans);
 
 export default router;

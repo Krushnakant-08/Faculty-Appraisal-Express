@@ -4,6 +4,7 @@ import authRoutes from './auth.routes';
 import adminRoutes from './admin.routes';
 import commonRoutes from './common.routes';
 import appraisalRoutes from './appraisal.routes';
+import verificationRoutes from './verification.routes';
 import documentRoutes from './document.routes';
 import { authMiddleware } from '../middleware/auth.middleware';
 
@@ -36,6 +37,7 @@ router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/common', commonRoutes);
 router.use('/appraisal', appraisalRoutes);
+router.use('/verification', verificationRoutes);
 
 // /:department/:userId/* document routes — must be LAST so named routes above take priority.
 // Matches e.g. /computer/25/generate-doc, /it/42/faculty-pdf, etc.

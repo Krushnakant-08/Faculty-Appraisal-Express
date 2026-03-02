@@ -14,7 +14,7 @@ declare global {
 }
 
 /** Roles that can view/act on any faculty's appraisal. */
-const EVALUATOR_ROLES: UserRole[] = ['admin', 'director', 'dean', 'associate_dean', 'hod'];
+const EVALUATOR_ROLES: UserRole[] = ['director', 'dean', 'associate_dean', 'hod'];
 
 /**
  * Find an appraisal by userId and return 404 if missing.
@@ -95,10 +95,6 @@ function assertDraft(res: Response, appraisal: IFacultyAppraisal): boolean {
 // GET /appraisal/:userId
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Returns the full appraisal document.
- * Faculty can only fetch their own; evaluator roles can fetch any.
- */
 export const getAppraisalByUserId = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -122,41 +118,6 @@ export const getAppraisalByUserId = async (req: Request, res: Response): Promise
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// READ — list
-// GET /appraisal  (admin / director / dean / hod)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Returns a summary list of all appraisals.
- * Supports optional ?status and ?department query filters.
- * Department filtering requires a join to the User collection.
- */
-export const getAllAppraisals = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { status, department } = req.query as Record<string, string | undefined>;
-
-    // Build the appraisal-level filter
-    const appraisalFilter: Record<string, unknown> = {};
-    if (status) appraisalFilter.status = status;
-
-    // If department filter is requested, resolve the matching userIds first
-    if (department) {
-      const usersInDept = await User.find({ department }, { userId: 1, _id: 0 }).lean();
-      const userIds = usersInDept.map((u) => u.userId);
-      appraisalFilter.userId = { $in: userIds };
-    }
-
-    const appraisals = await FacultyAppraisal.find(appraisalFilter)
-      .select('userId role designation appraisalYear status summary createdAt updatedAt')
-      .sort({ updatedAt: -1 });
-
-    sendSuccess(res, appraisals, 'Appraisals retrieved successfully');
-  } catch (error) {
-    console.error('getAllAppraisals error:', error);
-    sendError(res, 'Failed to retrieve appraisals', HttpStatus.INTERNAL_SERVER_ERROR);
-  }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // READ — by department
@@ -324,7 +285,7 @@ export const updatePartD = async (req: Request, res: Response): Promise<void> =>
  * The appraisal must be in SUBMITTED status (faculty has frozen their form).
  * The evaluator's role determines which mark field is written.
  */
-export const updatePartDEvaluator = async (req: Request, res: Response): Promise<void> => {
+export const portfolioMarksEvaluator = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
     const requestingUser = req.user!;
@@ -379,7 +340,7 @@ export const updatePartDEvaluator = async (req: Request, res: Response): Promise
 
     sendSuccess(res, updated, 'Evaluator marks saved successfully');
   } catch (error) {
-    console.error('updatePartDEvaluator error:', error);
+    console.error('portfolioMarksEvaluator error:', error);
     sendError(res, 'Failed to save evaluator marks', HttpStatus.INTERNAL_SERVER_ERROR);
   }
 };
@@ -399,8 +360,8 @@ export const updatePartE = async (req: Request, res: Response): Promise<void> =>
     if (!appraisal) return;
     if (!assertDraft(res, appraisal)) return;
 
-    // Strip the evaluator-only field — faculty cannot award themselves evaluatorMarks
-    const { evaluatorMarks, ...facultyFields } = req.body;
+    // Strip the evaluator-only field — faculty cannot award themselves totalVerified marks
+    const { totalVerified, ...facultyFields } = req.body;
 
     const updated = await FacultyAppraisal.findOneAndUpdate(
       { userId },
@@ -484,6 +445,7 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
       return;
     }
 
+    
     if (!appraisal.declaration.isAgreed) {
       sendError(
         res,
@@ -492,6 +454,8 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
       );
       return;
     }
+    
+    appraisal.summary.grandTotalClaimed = (appraisal.partA.totalClaimed + appraisal.partB.totalClaimed + appraisal.partC.totalClaimed + appraisal.partD.totalClaimed + appraisal.partE.totalClaimed) > 1000 ? 1000 : (appraisal.partA.totalClaimed + appraisal.partB.totalClaimed + appraisal.partC.totalClaimed + appraisal.partD.totalClaimed + appraisal.partE.totalClaimed);
 
     appraisal.status = APPRAISAL_STATUS.VERIFICATION_PENDING;
     appraisal.declaration.signatureDate = new Date();
