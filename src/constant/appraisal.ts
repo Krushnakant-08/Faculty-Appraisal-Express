@@ -5,8 +5,8 @@ export const APPRAISAL_STATUS = {
   PEDING: "Pending",
   VERIFICATION_PENDING: "Verification Pending",
   PORTFOLIO_MARKING_PENDING: "Portfolio Marks Pending",
-  INTERACTION_PENDING: "Interaction Pending",
   MARKS_VERIFICATION_PENDING: "Marks Verification Pending",
+  INTERACTION_PENDING: "Interaction Pending",
   COMPLETED: "Completed",
   SENT_TO_DIRECTOR: "Sent to Director",  
 } as const;
