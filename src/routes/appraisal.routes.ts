@@ -11,6 +11,7 @@ import {
   updatePartE,
   updateDeclaration,
   submitAppraisal,
+  submitVerifiedMarks,
 } from '../handlers/appraisal.handler';
 import { downloadAppraisalPDF } from '../handlers/pdf.handler';
 
@@ -29,7 +30,6 @@ router.get(
 // GET /appraisal/:userId/pdf
 router.get('/:userId/pdf', downloadAppraisalPDF);
 
-// GET /appraisal/:userId
 // Fetch the full appraisal document — owner or evaluator roles.
 router.get('/:userId', getAppraisalByUserId);
 
@@ -39,14 +39,13 @@ router.put('/:userId/part-c', updatePartC);
 router.put('/:userId/part-d', updatePartD);
 router.put('/:userId/part-e', updatePartE);
 
-router.patch('/:userId/declaration', updateDeclaration);
 
-// PATCH /appraisal/:userId/submit
-// Faculty freezes and submits their appraisal (DRAFT → SUBMITTED).
+router.patch('/:userId/declaration', updateDeclaration);
 router.patch('/:userId/submit', submitAppraisal);
 
-// PUT /appraisal/:userId/part-d/evaluator
-// Dean / HOD / Director enters their evaluation marks after faculty submission.
+// HOD submits verified marks and moves to interaction pending
+router.post('/:userId/verify-marks', authMiddleware('hod'), submitVerifiedMarks);
+
 router.put(
   '/:userId/part-d/evaluator',
   authMiddleware('dean', 'hod'),
