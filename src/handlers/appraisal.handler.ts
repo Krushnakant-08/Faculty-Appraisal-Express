@@ -14,7 +14,7 @@ declare global {
 }
 
 /** Roles that can view/act on any faculty's appraisal. */
-const EVALUATOR_ROLES: UserRole[] = ['director', 'dean', 'associate_dean', 'hod'];
+const EVALUATOR_ROLES: UserRole[] = ['director', 'dean', 'hod'];
 
 /**
  * Find an appraisal by userId and return 404 if missing.
@@ -155,10 +155,7 @@ export const getAppraisalsByDepartment = async (req: Request, res: Response): Pr
 // All faculty-facing updates require: owner + DRAFT status.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * PUT /appraisal/:userId/part-a
- * Updates academic involvement data. Only the appraisal owner can call this.
- */
+
 export const updatePartA = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -184,10 +181,6 @@ export const updatePartA = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-/**
- * PUT /appraisal/:userId/part-b
- * Updates research & innovations data. Only the appraisal owner can call this.
- */
 export const updatePartB = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -212,10 +205,6 @@ export const updatePartB = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-/**
- * PUT /appraisal/:userId/part-c
- * Updates self-development data. Only the appraisal owner can call this.
- */
 export const updatePartC = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -240,12 +229,6 @@ export const updatePartC = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-/**
- * PUT /appraisal/:userId/part-d
- * Updates portfolio self-assessment. Only the appraisal owner can call this.
- * Only the faculty-owned fields are accepted here; evaluator marks have a
- * separate protected route (updatePartDEvaluator).
- */
 export const updatePartD = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -277,12 +260,6 @@ export const updatePartD = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-/**
- * PUT /appraisal/:userId/part-d/evaluator
- * Allows a Dean, HOD, or Director to enter their evaluation marks into Part D.
- * The appraisal must be in SUBMITTED status (faculty has frozen their form).
- * The evaluator's role determines which mark field is written.
- */
 export const portfolioMarksEvaluator = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -319,12 +296,6 @@ export const portfolioMarksEvaluator = async (req: Request, res: Response): Prom
         setFields['partD.hodMarks'] = marks;
         setFields['partD.isMarkHOD'] = true;
         break;
-      case 'director':
-        setFields['partD.directorMarks'] = marks;
-        break;
-      case 'associate_dean':
-        setFields['partD.adminDeanMarks'] = marks;
-        break;
       default:
         sendError(res, 'Your role does not permit entering evaluator marks', HttpStatus.FORBIDDEN);
         return;
@@ -336,17 +307,52 @@ export const portfolioMarksEvaluator = async (req: Request, res: Response): Prom
       { new: true }
     );
 
-    sendSuccess(res, updated, 'Evaluator marks saved successfully');
+    if (!updated) {
+      sendError(res, 'Failed to update appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
+      return;
+    }
+
+    // Check if all required marks are now complete and auto-update status
+    const portfolioType = updated.partD.portfolioType;
+    const designation = updated.designation;
+    
+    let requiresHOD = false;
+    let requiresDean = false;
+
+    // Determine requirements based on portfolio type
+    if (portfolioType === 'both') {
+      requiresHOD = true;
+      requiresDean = true;
+    } else if (portfolioType === 'institute') {
+      requiresDean = true;
+    } else if (portfolioType === 'department') {
+      requiresHOD = true;
+    }
+
+    // Additional check for Associate Deans
+    if (designation === 'Associate Dean' && portfolioType !== 'institute') {
+      requiresHOD = true;
+      requiresDean = true;
+    }
+
+    // Check if all required marks are present
+    const hodComplete = !requiresHOD || updated.partD.isMarkHOD;
+    const deanComplete = !requiresDean || updated.partD.isMarkDean;
+
+    // If all required marks are in, automatically move to MARKS_VERIFICATION_PENDING
+    if (hodComplete && deanComplete) {
+      updated.status = APPRAISAL_STATUS.MARKS_VERIFICATION_PENDING;
+      await updated.save();
+      sendSuccess(res, updated, 'Evaluator marks saved successfully. Status updated to Marks Verification Pending.');
+    } else {
+      sendSuccess(res, updated, 'Evaluator marks saved successfully. Awaiting additional evaluator marks.');
+    }
   } catch (error) {
     console.error('portfolioMarksEvaluator error:', error);
     sendError(res, 'Failed to save evaluator marks', HttpStatus.INTERNAL_SERVER_ERROR);
   }
 };
 
-/**
- * PUT /appraisal/:userId/part-e
- * Updates extraordinary contributions. Only the appraisal owner can call this.
- */
 export const updatePartE = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -379,11 +385,7 @@ export const updatePartE = async (req: Request, res: Response): Promise<void> =>
 // PATCH /appraisal/:userId/declaration
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Records the faculty member's agreement to the declaration (Part F checkbox).
- * Must be in DRAFT status. The signature date is NOT set here — it is set when
- * the appraisal is formally submitted.
- */
+
 export const updateDeclaration = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -419,11 +421,6 @@ export const updateDeclaration = async (req: Request, res: Response): Promise<vo
 // WORKFLOW: SUBMIT → VERIFY → APPROVE
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * PATCH /appraisal/:userId/submit
- * Transitions DRAFT → SUBMITTED. Requires declaration agreement.
- * Stamps the signatureDate at this point.
- */
 export const submitAppraisal = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -463,5 +460,88 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
   } catch (error) {
     console.error('submitAppraisal error:', error);
     sendError(res, 'Failed to submit appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+};
+
+
+
+/**
+ * POST /appraisal/:userId/verify-marks
+ * HOD submits verified marks for sections A, C, D, E (Part B is read-only).
+ * Updates the verified totals and moves status to INTERACTION_PENDING.
+ */
+export const submitVerifiedMarks = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const requestingUser = req.user!;
+
+    // Only HOD can verify marks
+    if (requestingUser.role !== 'hod') {
+      sendError(res, 'Only HOD can verify marks', HttpStatus.UNAUTHORIZED);
+      return;
+    }
+
+    const appraisal = await findAppraisalOrFail(res, userId);
+    if (!appraisal) return;
+
+    // Get user details to check department
+    const user = await User.findOne({ userId });
+    if (!user) {
+      sendError(res, 'User not found', HttpStatus.NOT_FOUND);
+      return;
+    }
+
+    // Check if appraisal is in the correct status
+    if (appraisal.status !== APPRAISAL_STATUS.MARKS_VERIFICATION_PENDING) {
+      sendError(
+        res,
+        `Cannot verify marks: appraisal is in ${appraisal.status} status`,
+        HttpStatus.BAD_REQUEST
+      );
+      return;
+    }
+
+    // Extract verified marks from request body (format: { A: { verified_marks: 250 }, C: {...}, D: {...}, E: {...} })
+    const { A, C, D, E } = req.body;
+
+    if (!A || !C || !D || !E) {
+      sendError(res, 'Missing verified marks for sections A, C, D, or E', HttpStatus.BAD_REQUEST);
+      return;
+    }
+
+    // Update verified marks for each section
+    if (A.verified_marks !== undefined) {
+      appraisal.partA.totalVerified = Number(A.verified_marks);
+    }
+    // Part B is read-only, no update needed
+    if (C.verified_marks !== undefined) {
+      appraisal.partC.totalVerified = Number(C.verified_marks);
+    }
+    if (D.verified_marks !== undefined) {
+      appraisal.partD.totalVerified = Number(D.verified_marks);
+    }
+    if (E.verified_marks !== undefined) {
+      appraisal.partE.totalVerified = Number(E.verified_marks);
+    }
+
+    // Calculate grand total verified (capped at 1000)
+    const totalVerified = 
+      appraisal.partA.totalVerified +
+      appraisal.partB.totalVerified +
+      appraisal.partC.totalVerified +
+      appraisal.partD.totalVerified +
+      appraisal.partE.totalVerified;
+
+    appraisal.summary.grandTotalVerified = Math.min(1000, totalVerified);
+
+    // Update status to INTERACTION_PENDING
+    appraisal.status = APPRAISAL_STATUS.INTERACTION_PENDING;
+
+    await appraisal.save();
+
+    sendSuccess(res, appraisal, 'Marks verified successfully and moved to interaction pending');
+  } catch (error) {
+    console.error('submitVerifiedMarks error:', error);
+    sendError(res, 'Failed to submit verified marks', HttpStatus.INTERNAL_SERVER_ERROR);
   }
 };
