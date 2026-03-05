@@ -14,16 +14,22 @@ export interface User extends Document {
   userId: string;
   name: string;
   email: string;
-  department: DepartmentValue;
+  department?: DepartmentValue;
   mobile: string;
-  designation: UserDesignation;
+  designation?: UserDesignation;
   status: StakeholderStatus;
   password: string;
   role: UserRole;
   higherDean?: mongoose.Types.ObjectId; 
+  assignedDean?: string;
+  assignedFaculties?: string[];
   lastLogin?: Date;
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
+  specialization?: string;
+  organization?: string;
+  address?: string;
+  externalDesignation?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,7 +72,7 @@ const userSchema = new Schema<User>(
     department: {
       type: String,
       enum: DEPARTMENT.map((option) => option.value),
-      required: true,
+      required: false,
     },
 
     mobile: {
@@ -78,7 +84,7 @@ const userSchema = new Schema<User>(
     designation: {
       type: String,
       enum: DESIGNATION.map((option) => option.value),
-      required: true,
+      required: false,
       trim: true,
     },
 
@@ -94,6 +100,16 @@ const userSchema = new Schema<User>(
       ref: 'User',
     },
 
+    assignedDean: {
+      type: String,
+      trim: true,
+    },
+
+    assignedFaculties: {
+      type: [String],
+      default: [],
+    },
+
     lastLogin: {
       type: Date,
     },
@@ -102,6 +118,22 @@ const userSchema = new Schema<User>(
     },
     resetPasswordExpires: {
       type: Date,
+    },
+    specialization: {
+      type: String,
+      trim: true,
+    },
+    organization: {
+      type: String,
+      trim: true,
+    },
+    address: {
+      type: String,
+      trim: true,
+    },
+    externalDesignation: {
+      type: String,
+      trim: true,
     },
   },
   {

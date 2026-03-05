@@ -5,6 +5,7 @@ export const ROLE = [
 	{ label: 'Dean', value: 'dean' },
 	{ label: 'Admin', value: 'admin' },
 	{ label: 'Faculty', value: 'faculty' },
+	{ label: 'External', value: 'external' },
 ] as const;
 
 export const DESIGNATION = [
