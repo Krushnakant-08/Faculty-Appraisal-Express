@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import { User } from '../models/user';
 import InteractionDean from '../models/interactionDean';
+import InteractionEvaluation from '../models/interactionEvaluation';
+import { FacultyAppraisal } from '../models/detailedAppraisal';
+import { APPRAISAL_STATUS } from '../constant';
 import { hashPassword } from '../utils/password';
 
 interface ExternalFacultyInput {
@@ -109,25 +112,52 @@ export const getExternals = async (req: Request, res: Response) => {
   try {
     const { department } = req.params;
 
-    // Find all external faculty for this department
-    const externals = await User.find({
+    // Build query — deans only see externals assigned to them, externals see only themselves
+    const query: any = {
       role: 'external',
       status: 'active',
-      department: department
-    }).select('userId name email mobile externalDesignation specialization organization address assignedDean assignedFaculties');
+      department: department,
+    };
+    if (req.user?.role === 'dean') {
+      query.assignedDean = req.user.userId;
+    } else if (req.user?.role === 'external') {
+      query.userId = req.user.userId;
+    }
 
-    // Format response to match frontend expectations
-    const formattedExternals = externals.map((ext) => ({
-      userId: ext.userId,
-      full_name: ext.name,
-      mail: ext.email,
-      mob: ext.mobile,
-      desg: (ext as any).externalDesignation || '',
-      specialization: ext.specialization || '',
-      organization: ext.organization || '',
-      address: ext.address || '',
-      assignedDean: (ext as any).assignedDean || '',
-      assignedFaculties: (ext as any).assignedFaculties || [],
+    // Find all external faculty for this department
+    const externals = await User.find(query).select('userId name email mobile externalDesignation specialization organization address assignedDean assignedFaculties');
+
+    // Format response to match frontend expectations and populate assigned faculties/dean
+    const formattedExternals = await Promise.all(externals.map(async (ext) => {
+      const extAny = ext as any;
+      
+      // Populate assigned faculties with their details
+      let populatedFaculties: Array<{ _id: string; name: string; desg: string }> = [];
+      if (extAny.assignedFaculties && extAny.assignedFaculties.length > 0) {
+        const faculties = await User.find({
+          userId: { $in: extAny.assignedFaculties },
+          status: 'active'
+        }).select('userId name designation');
+        
+        populatedFaculties = faculties.map(f => ({
+          _id: f.userId,
+          name: f.name,
+          desg: f.designation || ''
+        }));
+      }
+
+      return {
+        userId: ext.userId,
+        full_name: ext.name,
+        mail: ext.email,
+        mob: ext.mobile,
+        desg: extAny.externalDesignation || '',
+        specialization: ext.specialization || '',
+        organization: ext.organization || '',
+        address: ext.address || '',
+        assignedDean: extAny.assignedDean || '',
+        assignedFaculties: populatedFaculties,
+      };
     }));
 
     return res.status(200).json({
@@ -194,10 +224,34 @@ export const assignDeanToExternal = async (req: Request, res: Response) => {
     const { department, userId } = req.params;
     const { deanUserId } = req.body;
 
-    if (!deanUserId) {
-      return res.status(400).json({
+    // Find external faculty first
+    const external = await User.findOne({
+      userId: userId,
+      role: 'external',
+      status: 'active',
+      department: department
+    });
+
+    if (!external) {
+      return res.status(404).json({
         success: false,
-        message: 'Dean userId is required',
+        message: 'External faculty not found',
+      });
+    }
+
+    // If deanUserId is empty/null, remove the dean assignment
+    if (!deanUserId) {
+      external.assignedDean = '';
+      await external.save();
+
+      return res.status(200).json({
+        success: true,
+        message: 'Dean assignment removed successfully',
+        data: {
+          userId: external.userId,
+          name: external.name,
+          assignedDean: '',
+        },
       });
     }
 
@@ -226,21 +280,6 @@ export const assignDeanToExternal = async (req: Request, res: Response) => {
       return res.status(404).json({
         success: false,
         message: 'Dean not found or inactive in this department',
-      });
-    }
-
-    // Find and update external faculty
-    const external = await User.findOne({
-      userId: userId,
-      role: 'external',
-      status: 'active',
-      department: department
-    });
-
-    if (!external) {
-      return res.status(404).json({
-        success: false,
-        message: 'External faculty not found',
       });
     }
 
@@ -339,7 +378,7 @@ export const assignFacultiesToExternal = async (req: Request, res: Response) => 
 export const getInteractionDeans = async (req: Request, res: Response) => {
   try {
     const { department } = req.params;
-
+    console.log(department)
     // Find interaction deans record for this department
     const interactionDeanRecord = await InteractionDean.findOne({
       department: department
@@ -383,68 +422,209 @@ export const getInteractionDeans = async (req: Request, res: Response) => {
 };
 
 /**
- * Toggle dean as interaction dean
- * PUT /api/interaction/:department/dean/:userId/toggle-interaction
+ * Submit interaction evaluation marks
+ * POST /api/interaction/:department/evaluate/:evaluatorRole/:externalId/:facultyId
+ * evaluatorRole: 'hod' | 'dean' | 'external'
  */
-export const toggleInteractionDean = async (req: Request, res: Response) => {
+export const submitInteractionEvaluation = async (req: Request, res: Response) => {
   try {
-    const { department, userId } = req.params;
+    const { department, evaluatorRole, externalId, facultyId } = req.params;
+    const {
+      knowledge,
+      skills,
+      attributes,
+      outcomesInitiatives,
+      selfBranching,
+      teamPerformance,
+      comments,
+      evaluatorId,
+      evaluatorName,
+    } = req.body;
 
-    // Find the dean
-    const dean = await User.findOne({
-      userId: userId,
-      role: 'dean',
+    // Validate evaluator role
+    if (!['hod', 'dean', 'external'].includes(evaluatorRole)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid evaluator role. Must be hod, dean, or external',
+      });
+    }
+
+    // Validate required fields
+    if (
+      knowledge === undefined ||
+      skills === undefined ||
+      attributes === undefined ||
+      outcomesInitiatives === undefined ||
+      selfBranching === undefined ||
+      teamPerformance === undefined
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'All evaluation criteria are required',
+      });
+    }
+
+    // Validate marks ranges
+    if (
+      knowledge < 0 || knowledge > 20 ||
+      skills < 0 || skills > 20 ||
+      attributes < 0 || attributes > 10 ||
+      outcomesInitiatives < 0 || outcomesInitiatives > 20 ||
+      selfBranching < 0 || selfBranching > 10 ||
+      teamPerformance < 0 || teamPerformance > 20
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Marks exceed allowed limits',
+      });
+    }
+
+    // Verify faculty exists
+    const faculty = await User.findOne({
+      userId: facultyId,
       status: 'active',
-      department: department
+      department: department,
     });
 
-    if (!dean) {
+    if (!faculty) {
       return res.status(404).json({
         success: false,
-        message: 'Dean not found in this department',
+        message: 'Faculty not found',
       });
     }
 
-    // Find or create interaction dean record for department
-    let interactionDeanRecord = await InteractionDean.findOne({ department });
-    
-    if (!interactionDeanRecord) {
-      interactionDeanRecord = new InteractionDean({
+    // Verify external exists
+    const external = await User.findOne({
+      userId: externalId,
+      role: 'external',
+      status: 'active',
+    });
+
+    if (!external) {
+      return res.status(404).json({
+        success: false,
+        message: 'External evaluator not found',
+      });
+    }
+
+    // Calculate total marks
+    const totalMarks = knowledge + skills + attributes + outcomesInitiatives + selfBranching + teamPerformance;
+
+    // Find or create interaction evaluation record
+    let evaluation = await InteractionEvaluation.findOne({
+      facultyId,
+      externalId,
+      department,
+    });
+
+    if (!evaluation) {
+      // Create new evaluation record
+      evaluation = new InteractionEvaluation({
+        facultyId,
+        facultyName: faculty.name,
+        externalId,
+        externalName: external.name,
         department,
-        deanIds: []
       });
     }
 
-    // Toggle dean in the deanIds array
-    const deanIndex = interactionDeanRecord.deanIds.indexOf(userId);
-    let isAdded = false;
-    
-    if (deanIndex > -1) {
-      // Remove dean from interaction deans
-      interactionDeanRecord.deanIds.splice(deanIndex, 1);
-      isAdded = false;
-    } else {
-      // Add dean to interaction deans
-      interactionDeanRecord.deanIds.push(userId);
-      isAdded = true;
+    // Block re-submission if this role already evaluated
+    const fieldName = `${evaluatorRole}Evaluation`;
+    if ((evaluation as any)[fieldName]?.evaluatorId) {
+      return res.status(400).json({
+        success: false,
+        message: `${evaluatorRole} evaluation has already been submitted and cannot be changed`,
+      });
     }
 
-    await interactionDeanRecord.save();
+    // Use req.user as fallback for evaluator info
+    const finalEvaluatorId = evaluatorId || req.user?.userId || '';
+    const finalEvaluatorName = evaluatorName || '';
+
+    // Update the appropriate evaluation based on role
+    (evaluation as any)[fieldName] = {
+      evaluatorId: finalEvaluatorId,
+      evaluatorName: finalEvaluatorName,
+      knowledge,
+      skills,
+      attributes,
+      outcomesInitiatives,
+      selfBranching,
+      teamPerformance,
+      comments: comments || '',
+      totalMarks,
+      evaluatedAt: new Date(),
+    };
+
+    // Recalculate summary
+    (evaluation as any).recalculateSummary();
+
+    await evaluation.save();
+
+    // When all three evaluations are done, mark the faculty's appraisal as Completed
+    if (evaluation.isCompleted) {
+      await FacultyAppraisal.findOneAndUpdate(
+        { userId: facultyId, status: APPRAISAL_STATUS.INTERACTION_PENDING },
+        { status: APPRAISAL_STATUS.COMPLETED }
+      );
+    }
 
     return res.status(200).json({
       success: true,
-      message: `Dean ${isAdded ? 'added to' : 'removed from'} interaction deans`,
+      message: 'Evaluation submitted successfully',
       data: {
-        userId: dean.userId,
-        name: dean.name,
-        isInteractionDean: isAdded,
+        facultyId: evaluation.facultyId,
+        facultyName: evaluation.facultyName,
+        evaluatorRole,
+        totalMarks,
+        evaluationsCompleted: evaluation.evaluationsCompleted,
+        averageMarks: evaluation.averageMarks,
+        isCompleted: evaluation.isCompleted,
       },
     });
   } catch (error: any) {
-    console.error('Error toggling interaction dean status:', error);
+    console.error('Error submitting interaction evaluation:', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Internal server error',
     });
   }
 };
+
+/**
+ * Get interaction evaluation for a faculty-external pair
+ * GET /api/interaction/:department/evaluation/:externalId/:facultyId
+ */
+export const getInteractionEvaluation = async (req: Request, res: Response) => {
+  try {
+    const { department, externalId, facultyId } = req.params;
+
+    const evaluation = await InteractionEvaluation.findOne({
+      facultyId,
+      externalId,
+      department,
+    });
+
+    if (!evaluation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Evaluation not found',
+        data: null,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Evaluation retrieved successfully',
+      data: evaluation,
+    });
+  } catch (error: any) {
+    console.error('Error fetching interaction evaluation:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error',
+    });
+  }
+};
+
+

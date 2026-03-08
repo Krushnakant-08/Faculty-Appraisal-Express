@@ -26,7 +26,7 @@ export const getAllFaculties = async (
 
     const formattedFaculties = faculties.map((faculty) => ({
       userId: faculty.userId,
-      department: faculty.department,
+      department: faculty.department || '',
       status: faculty.status,
       name: faculty.name,
       role: faculty.role,
@@ -54,7 +54,7 @@ export const getUsersByDepartment = async (req: Request, res: Response) => {
       });
     }
 
-    const users = await User.find({ department, role: { $nin: ['admin', 'director'] } }).select('userId name email department status role');
+    const users = await User.find({ department, role: { $nin: ['admin', 'director'] } }).select('userId name email department status role designation');
     return res.status(200).json({
       message: 'Users retrieved successfully',
       users,

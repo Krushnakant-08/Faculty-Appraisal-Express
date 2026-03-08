@@ -7,7 +7,8 @@ import {
   assignDeanToExternal,
   assignFacultiesToExternal,
   getInteractionDeans,
-  toggleInteractionDean
+  submitInteractionEvaluation,
+  getInteractionEvaluation,
 } from '../handlers/interaction.handler';
 
 const router = Router();
@@ -15,7 +16,7 @@ const router = Router();
 
 // External faculty management
 router.post('/:department/create-external', authMiddleware('hod'), createExternal);
-router.get('/:department/get-externals', authMiddleware('hod'), getExternals);
+router.get('/:department/get-externals', authMiddleware('hod', 'dean', 'external'), getExternals);
 router.delete('/:department/external/:userId', authMiddleware('hod'), deleteExternal);
 
 // Assignment routes
@@ -24,6 +25,9 @@ router.put('/:department/external/:userId/assign-faculties', authMiddleware('hod
 
 // Interaction dean management
 router.get('/:department/interaction-deans', authMiddleware('hod'), getInteractionDeans);
-router.put('/:department/dean/:userId/toggle-interaction', authMiddleware('hod'), toggleInteractionDean);
+
+// Evaluation routes
+router.post('/:department/evaluate/:evaluatorRole/:externalId/:facultyId', authMiddleware('hod', 'dean', 'external'), submitInteractionEvaluation);
+router.get('/:department/evaluation/:externalId/:facultyId', authMiddleware('hod', 'dean', 'external'), getInteractionEvaluation);
 
 export default router;
