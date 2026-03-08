@@ -19,6 +19,55 @@ interface ExternalFacultyInput {
 }
 
 /**
+ * Get faculty members in a department whose appraisal status is "Interaction Pending"
+ * GET /api/interaction/:department/interaction-pending-faculty
+ */
+export const getInteractionPendingFaculty = async (req: Request, res: Response) => {
+  try {
+    const { department } = req.params;
+
+    // Find faculty users in this department with academic designations
+    const deptFaculty = await User.find({
+      department,
+      role: { $in: ['faculty', 'hod'] },
+      status: 'active',
+      designation: { $in: ['Professor', 'Associate Professor', 'Assistant Professor'] },
+    }).select('userId name email designation');
+
+    const userIds = deptFaculty.map((u) => u.userId);
+
+    // Find which of these have "Interaction Pending" appraisal status
+    const pendingAppraisals = await FacultyAppraisal.find({
+      userId: { $in: userIds },
+      status: APPRAISAL_STATUS.INTERACTION_PENDING,
+    }).select('userId');
+
+    const pendingUserIds = new Set(pendingAppraisals.map((a) => a.userId));
+
+    const result = deptFaculty
+      .filter((u) => pendingUserIds.has(u.userId))
+      .map((u) => ({
+        userId: u.userId,
+        name: u.name,
+        email: u.email,
+        designation: u.designation,
+      }));
+
+    return res.status(200).json({
+      success: true,
+      message: 'Interaction-pending faculty retrieved successfully',
+      data: result,
+    });
+  } catch (error: any) {
+    console.error('Error fetching interaction-pending faculty:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error',
+    });
+  }
+};
+
+/**
  * Create external faculty for a department
  * POST /api/hod/:department/create-external
  */

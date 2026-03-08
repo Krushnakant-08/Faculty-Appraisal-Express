@@ -7,6 +7,7 @@ import {
   assignDeanToExternal,
   assignFacultiesToExternal,
   getInteractionDeans,
+  getInteractionPendingFaculty,
   submitInteractionEvaluation,
   getInteractionEvaluation,
 } from '../handlers/interaction.handler';
@@ -25,6 +26,7 @@ router.put('/:department/external/:userId/assign-faculties', authMiddleware('hod
 
 // Interaction dean management
 router.get('/:department/interaction-deans', authMiddleware('hod'), getInteractionDeans);
+router.get('/:department/interaction-pending-faculty', authMiddleware('hod'), getInteractionPendingFaculty);
 
 // Evaluation routes
 router.post('/:department/evaluate/:evaluatorRole/:externalId/:facultyId', authMiddleware('hod', 'dean', 'external'), submitInteractionEvaluation);
