@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth.middleware';
 import {
   getAppraisalByUserId,
   getAppraisalsByDepartment,
+  getAppraisalsByRole,
   updatePartA,
   updatePartB,
   updatePartC,
@@ -23,8 +24,15 @@ router.use(authMiddleware());
 // Must be declared BEFORE /:userId to avoid Express matching "department" as a userId.
 router.get(
   '/department/:department',
-  authMiddleware('hod'),
+  authMiddleware('hod', 'director'),
   getAppraisalsByDepartment
+);
+
+// Director fetches all appraisals for users with a given role (hod/dean)
+router.get(
+  '/by-role/:role',
+  authMiddleware('director'),
+  getAppraisalsByRole
 );
 
 // GET /appraisal/:userId/pdf
@@ -43,12 +51,12 @@ router.put('/:userId/part-e', updatePartE);
 router.patch('/:userId/declaration', updateDeclaration);
 router.patch('/:userId/submit', submitAppraisal);
 
-// HOD submits verified marks and moves to interaction pending
-router.post('/:userId/verify-marks', authMiddleware('hod'), submitVerifiedMarks);
+// HOD or Director submits verified marks and moves to interaction pending
+router.post('/:userId/verify-marks', authMiddleware('hod', 'director'), submitVerifiedMarks);
 
 router.put(
   '/:userId/part-d/evaluator',
-  authMiddleware('dean', 'hod'),
+  authMiddleware('dean', 'hod', 'director'),
   portfolioMarksEvaluator
 );
 

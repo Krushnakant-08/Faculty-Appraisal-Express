@@ -56,7 +56,7 @@ export interface IFacultyAppraisal extends Document {
     eLearningInstances: number;
     weeklyLoadSem1: number;
     weeklyLoadSem2: number;
-    phdScholar:           boolean;
+    phdScholar: boolean;
     projectsGuided: number;
     ptgMeetings: number;
     sectionMarks: {
@@ -184,6 +184,7 @@ export interface IFacultyAppraisal extends Document {
     hodMarks: number;
     isMarkDean: boolean;
     isMarkHOD: boolean;
+    isMarkDirector: boolean;
     // Admin-role path — active when role is one of the EVALUATOR_ROLES
     isAdministrativeRole: boolean;
     /**
@@ -230,8 +231,8 @@ const facultyAppraisalSchema = new Schema<IFacultyAppraisal>(
     userId: { type: String, required: true, index: true },
 
     status: {
-      type:    String,
-      enum:    APPRAISAL_STATUS,
+      type: String,
+      enum: APPRAISAL_STATUS,
       default: APPRAISAL_STATUS.PEDING,
     },
 
@@ -276,7 +277,7 @@ const facultyAppraisalSchema = new Schema<IFacultyAppraisal>(
       eLearningInstances: { type: Number, default: 0 },
       weeklyLoadSem1: { type: Number, default: 0 },
       weeklyLoadSem2: { type: Number, default: 0 },
-      phdScholar:           { type: Boolean, default: false },
+      phdScholar: { type: Boolean, default: false },
       projectsGuided: { type: Number, default: 0 },
       ptgMeetings: { type: Number, default: 0 },
       sectionMarks: {
@@ -397,6 +398,7 @@ const facultyAppraisalSchema = new Schema<IFacultyAppraisal>(
       hodMarks: { type: Number, default: 0 },
       isMarkDean: { type: Boolean, default: false },
       isMarkHOD: { type: Boolean, default: false },
+      isMarkDirector: { type: Boolean, default: false },
       isAdministrativeRole: { type: Boolean, default: false },
       /**
        * Only populated when isAdministrativeRole is true.

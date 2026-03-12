@@ -131,9 +131,21 @@ export const getAppraisalByUserId = async (req: Request, res: Response): Promise
 export const getAppraisalsByDepartment = async (req: Request, res: Response): Promise<void> => {
   try {
     const { department } = req.params;
+    const requestingUser = req.user!;
 
-    // Resolve userIds that belong to this department
-    const usersInDept = await User.find({ department }, { userId: 1, _id: 0 }).lean();
+    // Build user query — filter out roles that the requester should not see
+    const userQuery: Record<string, unknown> = { department };
+
+    if (requestingUser.role === 'hod') {
+      // HOD should not see other HODs or Deans — only faculty
+      userQuery.role = { $nin: ['hod', 'dean'] };
+    } else if (requestingUser.role === 'dean') {
+      // Dean should not see other Deans
+      userQuery.role = { $ne: 'dean' };
+    }
+    // Director sees everyone — no filter
+
+    const usersInDept = await User.find(userQuery, { userId: 1, _id: 0 }).lean();
     const userIds = usersInDept.map((u) => u.userId);
 
     const filter: Record<string, unknown> = { userId: { $in: userIds } };
@@ -268,6 +280,26 @@ export const portfolioMarksEvaluator = async (req: Request, res: Response): Prom
     const appraisal = await findAppraisalOrFail(res, userId);
     if (!appraisal) return;
 
+    // Look up the target user's role to enforce hierarchy restrictions
+    const targetUser = await User.findOne({ userId }).lean();
+    if (!targetUser) {
+      sendError(res, 'Target user not found', HttpStatus.NOT_FOUND);
+      return;
+    }
+
+    // Only the Director can give portfolio marks for HODs and Deans
+    if (
+      (targetUser.role === 'hod' || targetUser.role === 'dean') &&
+      requestingUser.role !== 'director'
+    ) {
+      sendError(
+        res,
+        `Only a Director can give portfolio marks for a ${targetUser.role.toUpperCase()}.`,
+        HttpStatus.FORBIDDEN
+      );
+      return;
+    }
+
     if (appraisal.status !== APPRAISAL_STATUS.PORTFOLIO_MARKING_PENDING) {
       sendError(
         res,
@@ -296,6 +328,10 @@ export const portfolioMarksEvaluator = async (req: Request, res: Response): Prom
         setFields['partD.hodMarks'] = marks;
         setFields['partD.isMarkHOD'] = true;
         break;
+      case 'director':
+        setFields['partD.directorMarks'] = marks;
+        setFields['partD.isMarkDirector'] = true;
+        break;
       default:
         sendError(res, 'Your role does not permit entering evaluator marks', HttpStatus.FORBIDDEN);
         return;
@@ -313,39 +349,50 @@ export const portfolioMarksEvaluator = async (req: Request, res: Response): Prom
     }
 
     // Check if all required marks are now complete and auto-update status
-    const portfolioType = updated.partD.portfolioType;
-    const designation = updated.designation;
-    
-    let requiresHOD = false;
-    let requiresDean = false;
+    // For HOD/Dean appraisals, only director marks are needed
+    const targetRole = targetUser.role;
 
-    // Determine requirements based on portfolio type
-    if (portfolioType === 'both') {
-      requiresHOD = true;
-      requiresDean = true;
-    } else if (portfolioType === 'institute') {
-      requiresDean = true;
-    } else if (portfolioType === 'department') {
-      requiresHOD = true;
-    }
-
-    // Additional check for Associate Deans
-    if (designation === 'Associate Dean' && portfolioType !== 'institute') {
-      requiresHOD = true;
-      requiresDean = true;
-    }
-
-    // Check if all required marks are present
-    const hodComplete = !requiresHOD || updated.partD.isMarkHOD;
-    const deanComplete = !requiresDean || updated.partD.isMarkDean;
-
-    // If all required marks are in, automatically move to MARKS_VERIFICATION_PENDING
-    if (hodComplete && deanComplete) {
-      updated.status = APPRAISAL_STATUS.MARKS_VERIFICATION_PENDING;
-      await updated.save();
-      sendSuccess(res, updated, 'Evaluator marks saved successfully. Status updated to Marks Verification Pending.');
+    if (targetRole === 'hod' || targetRole === 'dean') {
+      // HOD/Dean appraisals: only director gives portfolio marks
+      if (updated.partD.isMarkDirector) {
+        updated.status = APPRAISAL_STATUS.MARKS_VERIFICATION_PENDING;
+        await updated.save();
+        sendSuccess(res, updated, 'Director marks saved. Status updated to Marks Verification Pending.');
+      } else {
+        sendSuccess(res, updated, 'Evaluator marks saved. Awaiting Director marks.');
+      }
     } else {
-      sendSuccess(res, updated, 'Evaluator marks saved successfully. Awaiting additional evaluator marks.');
+      // Faculty appraisals: original logic — requires HOD and/or Dean based on portfolio type
+      const portfolioType = updated.partD.portfolioType;
+      const designation = updated.designation;
+
+      let requiresHOD = false;
+      let requiresDean = false;
+
+      if (portfolioType === 'both') {
+        requiresHOD = true;
+        requiresDean = true;
+      } else if (portfolioType === 'institute') {
+        requiresDean = true;
+      } else if (portfolioType === 'department') {
+        requiresHOD = true;
+      }
+
+      if (designation === 'Associate Dean' && portfolioType !== 'institute') {
+        requiresHOD = true;
+        requiresDean = true;
+      }
+
+      const hodComplete = !requiresHOD || updated.partD.isMarkHOD;
+      const deanComplete = !requiresDean || updated.partD.isMarkDean;
+
+      if (hodComplete && deanComplete) {
+        updated.status = APPRAISAL_STATUS.MARKS_VERIFICATION_PENDING;
+        await updated.save();
+        sendSuccess(res, updated, 'Evaluator marks saved successfully. Status updated to Marks Verification Pending.');
+      } else {
+        sendSuccess(res, updated, 'Evaluator marks saved successfully. Awaiting additional evaluator marks.');
+      }
     }
   } catch (error) {
     console.error('portfolioMarksEvaluator error:', error);
@@ -440,7 +487,7 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    
+
     if (!appraisal.declaration.isAgreed) {
       sendError(
         res,
@@ -449,7 +496,7 @@ export const submitAppraisal = async (req: Request, res: Response): Promise<void
       );
       return;
     }
-    
+
     appraisal.summary.grandTotalClaimed = (appraisal.partA.totalClaimed + appraisal.partB.totalClaimed + appraisal.partC.totalClaimed + appraisal.partD.totalClaimed + appraisal.partE.totalClaimed) > 1000 ? 1000 : (appraisal.partA.totalClaimed + appraisal.partB.totalClaimed + appraisal.partC.totalClaimed + appraisal.partD.totalClaimed + appraisal.partE.totalClaimed);
 
     appraisal.status = APPRAISAL_STATUS.VERIFICATION_PENDING;
@@ -475,19 +522,32 @@ export const submitVerifiedMarks = async (req: Request, res: Response): Promise<
     const { userId } = req.params;
     const requestingUser = req.user!;
 
-    // Only HOD can verify marks
-    if (requestingUser.role !== 'hod') {
-      sendError(res, 'Only HOD can verify marks', HttpStatus.UNAUTHORIZED);
+    // Only HOD or Director can verify marks
+    if (requestingUser.role !== 'hod' && requestingUser.role !== 'director') {
+      sendError(res, 'Only HOD or Director can verify marks', HttpStatus.UNAUTHORIZED);
       return;
     }
 
     const appraisal = await findAppraisalOrFail(res, userId);
     if (!appraisal) return;
 
-    // Get user details to check department
+    // Get user details to check department and role
     const user = await User.findOne({ userId });
     if (!user) {
       sendError(res, 'User not found', HttpStatus.NOT_FOUND);
+      return;
+    }
+
+    // HOD cannot verify marks for other HODs or Deans; only Director can
+    if (
+      requestingUser.role === 'hod' &&
+      (user.role === 'hod' || user.role === 'dean')
+    ) {
+      sendError(
+        res,
+        'An HOD cannot verify marks for another HOD or Dean. Only a Director can do this.',
+        HttpStatus.FORBIDDEN
+      );
       return;
     }
 
@@ -525,7 +585,7 @@ export const submitVerifiedMarks = async (req: Request, res: Response): Promise<
     }
 
     // Calculate grand total verified (capped at 1000)
-    const totalVerified = 
+    const totalVerified =
       appraisal.partA.totalVerified +
       appraisal.partB.totalVerified +
       appraisal.partC.totalVerified +
@@ -543,5 +603,48 @@ export const submitVerifiedMarks = async (req: Request, res: Response): Promise<
   } catch (error) {
     console.error('submitVerifiedMarks error:', error);
     sendError(res, 'Failed to submit verified marks', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+};
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// READ — by role (for director to view all HOD/Dean appraisals)
+// GET /appraisal/by-role/:role
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getAppraisalsByRole = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { role } = req.params;
+
+    // Only allow fetching hod and dean appraisals
+    if (role !== 'hod' && role !== 'dean') {
+      sendError(res, 'Can only fetch appraisals for hod or dean roles', HttpStatus.BAD_REQUEST);
+      return;
+    }
+
+    // Find all users with the specified role
+    const usersWithRole = await User.find({ role }, { userId: 1, _id: 0 }).lean();
+    const userIds = usersWithRole.map((u) => u.userId);
+
+    const appraisals = await FacultyAppraisal.find({ userId: { $in: userIds } })
+      .select('userId role designation appraisalYear status summary partD createdAt updatedAt')
+      .sort({ updatedAt: -1 });
+
+    // Enrich with user info (department, name)
+    const enriched = await Promise.all(
+      appraisals.map(async (appraisal) => {
+        const user = await User.findOne({ userId: appraisal.userId }).lean();
+        return {
+          ...appraisal.toObject(),
+          department: user?.department ?? 'Unknown',
+          name: user?.name ?? appraisal.userId,
+        };
+      })
+    );
+
+    sendSuccess(res, enriched, `${role.toUpperCase()} appraisals retrieved successfully`);
+  } catch (error) {
+    console.error('getAppraisalsByRole error:', error);
+    sendError(res, 'Failed to retrieve appraisals by role', HttpStatus.INTERNAL_SERVER_ERROR);
   }
 };

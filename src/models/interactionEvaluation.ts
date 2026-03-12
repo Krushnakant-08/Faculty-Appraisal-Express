@@ -22,18 +22,19 @@ export interface InteractionEvaluation extends Document {
   externalId: string;           // External evaluator assigned
   externalName: string;
   department: DepartmentValue;
-  
+
   // Evaluations from each role
   hodEvaluation: EvaluatorMarks;
   deanEvaluation: EvaluatorMarks;
   externalEvaluation: EvaluatorMarks;
-  
+  directorEvaluation: EvaluatorMarks;
+
   // Summary
   totalMarksReceived: number;    // Sum of all evaluations
   averageMarks: number;          // Average of completed evaluations
-  evaluationsCompleted: number;  // Count of completed evaluations (0-3)
-  isCompleted: boolean;          // All three evaluations done
-  
+  evaluationsCompleted: number;  // Count of completed evaluations
+  isCompleted: boolean;          // All required evaluations done
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -128,6 +129,7 @@ const interactionEvaluationSchema = new Schema<InteractionEvaluation>(
     hodEvaluation: evaluatorMarksSchema,
     deanEvaluation: evaluatorMarksSchema,
     externalEvaluation: evaluatorMarksSchema,
+    directorEvaluation: evaluatorMarksSchema,
     totalMarksReceived: {
       type: Number,
       default: 0,
@@ -161,7 +163,7 @@ interactionEvaluationSchema.index(
 );
 
 // Method to recalculate summary fields
-interactionEvaluationSchema.methods.recalculateSummary = function() {
+interactionEvaluationSchema.methods.recalculateSummary = function () {
   let total = 0;
   let count = 0;
 
@@ -177,11 +179,26 @@ interactionEvaluationSchema.methods.recalculateSummary = function() {
     total += this.externalEvaluation.totalMarks;
     count++;
   }
+  if (this.directorEvaluation && this.directorEvaluation.evaluatorId) {
+    total += this.directorEvaluation.totalMarks;
+    count++;
+  }
 
   this.totalMarksReceived = total;
   this.evaluationsCompleted = count;
   this.averageMarks = count > 0 ? total / count : 0;
-  this.isCompleted = count === 3;
+
+  // For HOD/Dean appraisals (dept pccoe): director + external(s) = completed when director + external done
+  // For faculty appraisals: hod + dean + external = 3 evaluations
+  const hasDirector = !!(this.directorEvaluation && this.directorEvaluation.evaluatorId);
+  if (hasDirector) {
+    // Director-managed interaction: needs director + external
+    const hasExternal = !!(this.externalEvaluation && this.externalEvaluation.evaluatorId);
+    this.isCompleted = hasDirector && hasExternal;
+  } else {
+    // Faculty interaction: needs hod + dean + external
+    this.isCompleted = count === 3;
+  }
 };
 
 export default mongoose.model<InteractionEvaluation>('InteractionEvaluation', interactionEvaluationSchema);

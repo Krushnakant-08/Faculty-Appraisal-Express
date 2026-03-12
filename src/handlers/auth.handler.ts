@@ -11,7 +11,7 @@ const setCookies = (
   res: Response,
   accessToken: string,
   role: string,
-  user: { id: string; email: string; name: string; role: string; department: string; designation?: string; isInVerificationPanel?: boolean },
+  user: { id: string; email: string; name: string; role: string; department?: string; designation?: string; isInVerificationPanel?: boolean },
 ): void => {
   const isProd = process.env.NODE_ENV === "production";
 

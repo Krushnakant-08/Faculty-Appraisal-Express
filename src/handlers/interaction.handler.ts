@@ -21,20 +21,29 @@ interface ExternalFacultyInput {
 /**
  * Get faculty members in a department whose appraisal status is "Interaction Pending"
  * GET /api/interaction/:department/interaction-pending-faculty
+ * When called by director, returns HODs/Deans college-wide instead.
  */
 export const getInteractionPendingFaculty = async (req: Request, res: Response) => {
   try {
     const { department } = req.params;
+    const isDirector = req.user?.role === 'director';
 
-    // Find faculty users in this department with academic designations
-    const deptFaculty = await User.find({
-      department,
-      role: { $in: ['faculty', 'hod'] },
+    // Director sees HOD/Dean college-wide; HOD sees faculty in their department
+    const userQuery: any = {
       status: 'active',
       designation: { $in: ['Professor', 'Associate Professor', 'Assistant Professor'] },
-    }).select('userId name email designation');
+    };
 
-    const userIds = deptFaculty.map((u) => u.userId);
+    if (isDirector) {
+      userQuery.role = { $in: ['hod', 'dean'] };
+      // no department filter — college-wide
+    } else {
+      userQuery.department = department;
+      userQuery.role = { $in: ['faculty', 'hod'] };
+    }
+
+    const users = await User.find(userQuery).select('userId name email designation role department');
+    const userIds = users.map((u) => u.userId);
 
     // Find which of these have "Interaction Pending" appraisal status
     const pendingAppraisals = await FacultyAppraisal.find({
@@ -44,13 +53,15 @@ export const getInteractionPendingFaculty = async (req: Request, res: Response) 
 
     const pendingUserIds = new Set(pendingAppraisals.map((a) => a.userId));
 
-    const result = deptFaculty
+    const result = users
       .filter((u) => pendingUserIds.has(u.userId))
       .map((u) => ({
         userId: u.userId,
         name: u.name,
         email: u.email,
         designation: u.designation,
+        role: (u as any).role,
+        department: (u as any).department,
       }));
 
     return res.status(200).json({
@@ -161,16 +172,23 @@ export const getExternals = async (req: Request, res: Response) => {
   try {
     const { department } = req.params;
 
-    // Build query — deans only see externals assigned to them, externals see only themselves
+    // Build query — filter by role and visibility rules
     const query: any = {
       role: 'external',
       status: 'active',
       department: department,
     };
-    if (req.user?.role === 'dean') {
+
+    if (req.user?.role === 'director') {
+      // Director only sees externals in the "pccoe" department (director-added)
+      query.department = 'pccoe';
+    } else if (req.user?.role === 'dean') {
       query.assignedDean = req.user.userId;
     } else if (req.user?.role === 'external') {
       query.userId = req.user.userId;
+    } else if (req.user?.role === 'hod') {
+      // HOD should NOT see director-added "pccoe" externals
+      // Only show externals from the requested department (which is the HOD's own dept)
     }
 
     // Find all external faculty for this department
@@ -179,7 +197,7 @@ export const getExternals = async (req: Request, res: Response) => {
     // Format response to match frontend expectations and populate assigned faculties/dean
     const formattedExternals = await Promise.all(externals.map(async (ext) => {
       const extAny = ext as any;
-      
+
       // Populate assigned faculties with their details
       let populatedFaculties: Array<{ _id: string; name: string; desg: string }> = [];
       if (extAny.assignedFaculties && extAny.assignedFaculties.length > 0) {
@@ -187,7 +205,7 @@ export const getExternals = async (req: Request, res: Response) => {
           userId: { $in: extAny.assignedFaculties },
           status: 'active'
         }).select('userId name designation');
-        
+
         populatedFaculties = faculties.map(f => ({
           _id: f.userId,
           name: f.name,
@@ -369,18 +387,30 @@ export const assignFacultiesToExternal = async (req: Request, res: Response) => 
       });
     }
 
-    // Verify all faculties exist and have faculty role
-    const faculties = await User.find({
+    // Verify all assignees exist — when director assigns, they assign HOD/Dean (not faculty)
+    const assigneeRoles = req.user?.role === 'director'
+      ? ['hod', 'dean']   // Director assigns HOD/Dean to externals
+      : ['faculty'];       // HOD assigns faculty to externals
+
+    const assigneeQuery: any = {
       userId: { $in: facultyUserIds },
-      role: 'faculty',
+      role: { $in: assigneeRoles },
       status: 'active',
-      department: department
-    });
+    };
+
+    // HOD scopes to their department; director is college-wide
+    if (req.user?.role !== 'director') {
+      assigneeQuery.department = department;
+    }
+
+    const faculties = await User.find(assigneeQuery);
 
     if (faculties.length !== facultyUserIds.length) {
       return res.status(404).json({
         success: false,
-        message: 'Some faculties not found in this department',
+        message: req.user?.role === 'director'
+          ? 'Some HODs/Deans not found'
+          : 'Some faculties not found in this department',
       });
     }
 
@@ -491,10 +521,10 @@ export const submitInteractionEvaluation = async (req: Request, res: Response) =
     } = req.body;
 
     // Validate evaluator role
-    if (!['hod', 'dean', 'external'].includes(evaluatorRole)) {
+    if (!['hod', 'dean', 'external', 'director'].includes(evaluatorRole)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid evaluator role. Must be hod, dean, or external',
+        message: 'Invalid evaluator role. Must be hod, dean, external, or director',
       });
     }
 
@@ -529,11 +559,17 @@ export const submitInteractionEvaluation = async (req: Request, res: Response) =
     }
 
     // Verify faculty exists
-    const faculty = await User.findOne({
+    // For 'pccoe' department (director-managed HOD/Dean interactions),
+    // skip department check since HODs/Deans have their own real departments.
+    const facultyQuery: any = {
       userId: facultyId,
       status: 'active',
-      department: department,
-    });
+    };
+    if (department !== 'pccoe') {
+      facultyQuery.department = department;
+    }
+
+    const faculty = await User.findOne(facultyQuery);
 
     if (!faculty) {
       return res.status(404).json({
