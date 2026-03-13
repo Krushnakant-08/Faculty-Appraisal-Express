@@ -101,6 +101,16 @@ function buildData(
   const partE = appraisal?.partE ?? {};
   const summary = appraisal?.summary ?? {};
 
+  const now = new Date();
+  const fallbackFromYear = now.getMonth() >= 3
+    ? now.getFullYear()
+    : now.getFullYear() - 1;
+  const fromYear = Number.isFinite(appraisal?.appraisalYear)
+    ? Number(appraisal.appraisalYear)
+    : fallbackFromYear;
+  const toYear = fromYear + 1;
+  const academicYearRange = `1st April ${fromYear} to 31st March ${toYear}`;
+
   const sectionAMarks = partA.sectionMarks ?? {};
   const sectionARawTotal = Object.values(sectionAMarks).reduce(
     (sum: number, value) => sum + (typeof value === 'number' ? value : 0),
@@ -171,6 +181,9 @@ function buildData(
     faculty_name:        userName,
     faculty_designation: designation,
     faculty_department:  department.replace(/\b\w/g, (ch) => ch.toUpperCase()),
+    from_year:           String(fromYear),
+    to_year:             String(toYear),
+    academic_year_range: academicYearRange,
 
     // ── Part A ───────────────────────────────────────────────────────────────
     result_analysis_marks:     formatValue(sectionAMarks.resultAnalysis ?? 0),
