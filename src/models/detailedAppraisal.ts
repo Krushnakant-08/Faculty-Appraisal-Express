@@ -215,6 +215,9 @@ export interface IFacultyAppraisal extends Document {
     isAgreed: boolean;
     signatureDate?: Date;
   };
+
+  /** Cloudinary URL of the most recently generated appraisal PDF. */
+  pdfUrl: string;
 }
 
 
@@ -434,6 +437,9 @@ const facultyAppraisalSchema = new Schema<IFacultyAppraisal>(
       isAgreed: { type: Boolean, default: false },
       signatureDate: { type: Date },
     },
+
+    // ── PDF (Cloudinary URL of the latest generated appraisal PDF) ───────────
+    pdfUrl: { type: String, default: '' },
   },
   { timestamps: true }
 );

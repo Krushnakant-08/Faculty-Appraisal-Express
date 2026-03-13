@@ -4,6 +4,7 @@ import { User } from '../models/user';
 import { sendSuccess, sendError, HttpStatus } from '../utils/response';
 import { type UserRole } from '../constant/userInfo';
 import { APPRAISAL_STATUS } from '../constant';
+import { getSignedAppraisalPdfUrl } from '../config/cloudinary';
 
 declare global {
   namespace Express {
@@ -111,7 +112,13 @@ export const getAppraisalByUserId = async (req: Request, res: Response): Promise
     const appraisal = await findAppraisalOrFail(res, userId);
     if (!appraisal) return;
 
-    sendSuccess(res, appraisal, 'Appraisal retrieved successfully');
+    const appraisalResponse = appraisal.toObject();
+
+    if (appraisalResponse.pdfUrl) {
+      appraisalResponse.pdfUrl = getSignedAppraisalPdfUrl(userId, appraisalResponse.appraisalYear);
+    }
+
+    sendSuccess(res, appraisalResponse, 'Appraisal retrieved successfully');
   } catch (error) {
     console.error('getAppraisalByUserId error:', error);
     sendError(res, 'Failed to retrieve appraisal', HttpStatus.INTERNAL_SERVER_ERROR);
